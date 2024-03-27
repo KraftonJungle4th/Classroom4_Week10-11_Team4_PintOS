@@ -2,6 +2,7 @@
 #define VM_VM_H
 #include <stdbool.h>
 #include "threads/palloc.h"
+#include "hash.h"
 
 enum vm_type {
 	/* page not initialized */
@@ -46,6 +47,7 @@ struct page {
 	struct frame *frame;   /* Back reference for frame */
 
 	/* Your implementation */
+	struct hash_elem hash_elem;
 
 	/* Per-type data are binded into the union.
 	 * Each function automatically detects the current union */
@@ -65,6 +67,11 @@ struct frame {
 	struct page *page;
 };
 
+// 페이지 operations를 위한 함수 테이블입니다. 
+// 이것은 C언어의 "인터페이스"를 도구화 하기 위한 방법중 하나입니다.
+// "method"의 테이블을 struct의 멤버에 추가하세요.
+// 원하는 대로 이름을 지어도 됩니다.
+
 /* The function table for page operations.
  * This is one way of implementing "interface" in C.
  * Put the table of "method" into the struct's member, and
@@ -81,10 +88,15 @@ struct page_operations {
 #define destroy(page) \
 	if ((page)->operations->destroy) (page)->operations->destroy (page)
 
+// current process의 메모리 공간을 나타냅니다.
+// 우리는 이 struct를 위한 특정한 디자인을 강요하지 않습니다.
+// 자유롭게 구조를 디자인 해보세요.
+
 /* Representation of current process's memory space.
  * We don't want to force you to obey any specific design for this struct.
  * All designs up to you for this. */
 struct supplemental_page_table {
+	struct hash pages;
 };
 
 #include "threads/thread.h"
