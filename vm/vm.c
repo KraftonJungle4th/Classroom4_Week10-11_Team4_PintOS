@@ -3,11 +3,13 @@
 #include "threads/malloc.h"
 #include "vm/vm.h"
 #include "vm/inspect.h"
+#include "threads/mmu.h"
 
 bool page_less (const struct hash_elem *a_, const struct hash_elem *b_ , void *aux UNUSED);
 unsigned page_hash (const struct hash_elem *p_ , void *aux UNUSED);
 struct page *page_lookup (const void *va, struct hash *pages_);
 
+struct list frame_table;
 /* Initializes the virtual memory subsystem by invoking each subsystem's
  * intialize codes. */
 void
@@ -22,6 +24,7 @@ vm_init (void) {
 	// 위 코드를 변경하지 마시오.
 	/* TODO: Your code goes here. */
 	// 당신의 코드는 여기에 적으시오.
+	list_init(&frame_table);
 }
 
 
@@ -137,8 +140,13 @@ vm_evict_frame (void) {
  * space.*/
 static struct frame *
 vm_get_frame (void) {
-	struct frame *frame = NULL;
-	/* TODO: Fill this function. */
+	struct frame *frame = malloc(sizeof frame);
+	frame->kva = palloc_get_page(PAL_USER | PAL_ZERO);
+	// NOTE: 만약 페이지가 2개 이상 필요한 작업이면? -> 한번 pop해서는 부족하다. while 문으로 될 때까지 해야되는 것이 아닌가?
+	if (frame == NULL || frame->kva == NULL)
+		list_pop_front(&frame_table);
+	else
+		list_push_back(&frame_table, &frame->frame_elem);
 
 	ASSERT (frame != NULL);
 	ASSERT (frame->page == NULL);
@@ -178,29 +186,31 @@ vm_dealloc_page (struct page *page) {
 }
 
 // VA에 할당된 페이지를 요청합니다.
-
 /* Claim the page that allocate on VA. */
 bool
-vm_claim_page (void *va UNUSED) {
-	struct page *page = NULL;
-	/* TODO: Fill this function */
-
+vm_claim_page (void *va) {
+	// spt에서 va를 통해 물리 페이지랑 연결한 페이지를 찾는다.
+	// 해당 페이지를 vm_do_claim_page에 전달한다.
+	struct page *page = spt_find_page(&thread_current()->spt, va);
 	return vm_do_claim_page (page);
 }
 
 // PAGE를 요청하고 MMU에 set up 합니다.
-
 /* Claim the PAGE and set up the mmu. */
 static bool
 vm_do_claim_page (struct page *page) {
-	struct frame *frame = vm_get_frame ();
+	ASSERT (page != NULL);
+	if (page->frame != NULL)
+		return false;
 
-	/* Set links */
+	// 전달받은 페이지가 이미 프레임을 할당받았는지 확인
+	struct frame *frame = vm_get_frame ();
 	frame->page = page;
 	page->frame = frame;
 
-	/* TODO: Insert page table entry to map page's VA to frame's PA. */
-
+	// 유저 페이지가 페이지 테이블에 정상적으로 들어갔는지 확인(= 커널 가상 메모리가 반환되는지)
+	if (!pml4_set_page(thread_current()->pml4, page->va, frame->kva, true))
+		return false;
 	return swap_in (page, frame->kva);
 }
 

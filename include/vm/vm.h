@@ -65,6 +65,7 @@ struct page {
 struct frame {
 	void *kva;
 	struct page *page;
+	struct list_elem frame_elem;
 };
 
 // 페이지 operations를 위한 함수 테이블입니다. 
