@@ -63,15 +63,20 @@ vm_alloc_page_with_initializer (enum vm_type type, void *upage, bool writable,
 		vm_initializer *init, void *aux) {
 	ASSERT (VM_TYPE(type) != VM_UNINIT)
 	struct supplemental_page_table *spt = &thread_current ()->spt;
-
-	/* Check wheter the upage is already occupied or not. */
 	if (spt_find_page (spt, upage) == NULL) {
-		/* TODO: Create the page, fetch the initialier according to the VM type,
-		 * TODO: and then create "uninit" page struct by calling uninit_new. You
-		 * TODO: should modify the field after calling the uninit_new. */
-		
-		/* TODO: Insert the page into the spt. */
-		return true;
+		struct page *page = malloc(sizeof (struct page));
+		switch(VM_TYPE(type)){
+			case VM_ANON:
+				uninit_new(page , upage , init , type , aux , anon_initializer);
+				break;
+			case VM_FILE:
+				uninit_new(page , upage , init , type , aux , file_backed_initializer);
+				break;
+			default:
+				break;
+		}
+		page->writable = writable;
+		return spt_insert_page(&spt->pages, page);	
 	}
 err:
 	return false;
@@ -92,6 +97,7 @@ bool
 spt_insert_page (struct supplemental_page_table *spt UNUSED,
 		struct page *page UNUSED) {
 	int succ = false;
+	/* TODO: Fill this function. */
 	struct page *result = hash_insert(&spt->pages, &page->hash_elem);
 	if(result != page)
 		succ = true;
@@ -167,14 +173,9 @@ vm_handle_wp (struct page *page UNUSED) {
 bool
 vm_try_handle_fault (struct intr_frame *f UNUSED, void *addr UNUSED,
 		bool user UNUSED, bool write UNUSED, bool not_present UNUSED) {
-	if(addr == NULL || !is_user_vaddr(addr))
-		exit(1);
 	struct supplemental_page_table *spt UNUSED = &thread_current ()->spt;
 	struct page *page = NULL;
 	/* TODO: Validate the fault */
-	// 유효하지 않은 폴트 or bogus 폴트 구분하여 처리
-	// 유효하지 않은 페이지에 접근한 폴트 : kill
-	// bogus 폴트(지연 로딩 페이지, 스왑 아웃 페이지, 쓰기 보호 페이지) : 컨텐츠 로드(vm_alloc_page_with_initializer, lazy_load_segment) 및 제어권 반환
 	/* TODO: Your code goes here */
 
 	return vm_do_claim_page (page);
