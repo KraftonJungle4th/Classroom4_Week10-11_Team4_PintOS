@@ -52,7 +52,7 @@ struct page {
 	/* Per-type data are binded into the union.
 	 * Each function automatically detects the current union */
 	union {
-		struct uninit_page uninit;
+		struct uninit_page uninit; // 지연 로딩을 위한 초기화되지 않은 페이지
 		struct anon_page anon;
 		struct file_page file;
 #ifdef EFILESYS
