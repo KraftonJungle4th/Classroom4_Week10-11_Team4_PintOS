@@ -518,7 +518,6 @@ load (const char *file_name, struct intr_frame *if_) {
 		total_argv_length += argv_length;
 		*rsp -= argv_length; // 인자 길이만큼 스택 포인터 감소
 		strlcpy(*rsp, argv[i], argv_length); // 주소에 문자열 값을저장
-		printf("push arg( arg = %s, in rsp = %s)", argv[i], *rsp);
 		argv_addr[i] = (uintptr_t) *rsp;
 	}
 	
@@ -551,7 +550,6 @@ load (const char *file_name, struct intr_frame *if_) {
 
 	file_deny_write(file);
 	thread_current()->executable = file;
-	printf("setup argument sucess!\n");
 	// hex_dump(if_->rsp, if_->rsp, USER_STACK - if_->rsp, true); // 시작 지점, 출력할 데이터가 담겨있는 포인터, 출력할 크기, (추가 내용) 아스키 코드로 변환 여부)
 	success = true;
 
@@ -604,7 +602,7 @@ validate_segment (const struct Phdr *phdr, struct file *file) {
 	/* It's okay. */
 	return true;
 }
-#define VM
+
 #ifndef VM
 /* Codes of this block will be ONLY USED DURING project 2.
  * If you want to implement the function for whole project 2, implement it
@@ -715,26 +713,20 @@ lazy_load_segment (struct page *page, void *aux) {
 	/* TODO: This called when the first page fault occurs on address VA. */
 	/* TODO: VA is available when calling this function. */
 	// 두 인자값을 이용하여 세그먼트를 읽을 파일을 찾고 최종적으로는 세그먼트를 메모리에서 읽어야 함
-	void **aux_ = (void **) aux;
-	struct file *file = (struct file *) (aux_[0]);
-	size_t page_read_bytes = *(size_t *) (aux_[1]); // 파일로부터 읽을 바이트의 수
-	size_t page_zero_bytes = *(size_t *) (aux_[2]); // 0으로 채워야 할 바이트의 수
-	off_t offset = *(off_t *) (aux_[3]);
-	printf("file : %p\n", file);
-	printf("page_read_bytes %d\n", page_read_bytes);
-	printf("page_zero_bytes %d\n", page_zero_bytes);
-	printf("offset %d\n", offset);
-
-	if (!vm_claim_page(page->va))
-		return false;
+	struct lazy_aux *lazy_aux = (struct lazy_aux *) aux;
+	struct file *file = lazy_aux->file;
+	size_t page_read_bytes = lazy_aux->page_read_bytes;
+	size_t page_zero_bytes = PGSIZE - page_read_bytes;
+	off_t ofs = lazy_aux->ofs;
 	void *kpage = page->frame->kva;
-	file_seek(file, offset);
+
+	file_seek(file, ofs);
 	/* Load this page. */
 	if (file_read (file, kpage, page_read_bytes) != (int) page_read_bytes) {
-		vm_dealloc_page (page);
 		return false;
 	}
 	memset (kpage + page_read_bytes, 0, page_zero_bytes);
+	free(lazy_aux);
 	return true;
 }
 
@@ -767,15 +759,12 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 		size_t page_read_bytes = read_bytes < PGSIZE ? read_bytes : PGSIZE; // 파일로부터 읽을 바이트의 수
 		size_t page_zero_bytes = PGSIZE - page_read_bytes; // 0으로 채워야 할 바이트의 수
 
-		/* TODO: Set up aux to pass information to the lazy_load_segment. */
-		// lazy_load_segment에서 필요한 매개변수 : struct page *page, void *aux
-		// upage를 통해 spt에서 page를 가져와서 aux 값에 넣어주고 전달
-		void **aux = malloc((sizeof (void *)) * 4);
-		aux[0] = file;
-		aux[1] = &page_read_bytes;
-		aux[2] = &page_zero_bytes;
-		aux[3] = &ofs;
-		if (!vm_alloc_page_with_initializer (VM_FILE, upage, writable, lazy_load_segment, aux))
+		struct lazy_aux *lazy_aux = malloc(sizeof (struct lazy_aux));
+		lazy_aux->file = file;
+		lazy_aux->page_read_bytes = page_read_bytes;
+		lazy_aux->ofs = ofs;
+
+		if (!vm_alloc_page_with_initializer (VM_ANON, upage, writable, lazy_load_segment, lazy_aux))
 			return false;
 
 		/* Advance. */
