@@ -4,6 +4,7 @@
 #include "vm/vm.h"
 #include "vm/inspect.h"
 #include "threads/mmu.h"
+#include "threads/vaddr.h"
 
 bool page_less (const struct hash_elem *a_, const struct hash_elem *b_ , void *aux UNUSED);
 unsigned page_hash (const struct hash_elem *p_ , void *aux UNUSED);
@@ -65,12 +66,12 @@ vm_alloc_page_with_initializer (enum vm_type type, void *upage, bool writable,
 	struct supplemental_page_table *spt = &thread_current ()->spt;
 	if (spt_find_page (spt, upage) == NULL) {
 		struct page *page = malloc(sizeof (struct page));
-		switch(VM_TYPE(type)){
+		switch (VM_TYPE(type)){
 			case VM_ANON:
-				uninit_new(page , upage , init , type , aux , anon_initializer);
+				uninit_new(page, upage, init, type, aux, anon_initializer);
 				break;
 			case VM_FILE:
-				uninit_new(page , upage , init , type , aux , file_backed_initializer);
+				uninit_new(page, upage, init, type, aux, file_backed_initializer);
 				break;
 			default:
 				break;
@@ -97,7 +98,6 @@ bool
 spt_insert_page (struct supplemental_page_table *spt UNUSED,
 		struct page *page UNUSED) {
 	int succ = false;
-	/* TODO: Fill this function. */
 	struct page *result = hash_insert(&spt->pages, &page->hash_elem);
 	if(result != page)
 		succ = true;
@@ -146,12 +146,12 @@ static struct frame *
 vm_get_frame (void) {
 	struct frame *frame = malloc(sizeof frame);
 	frame->kva = palloc_get_page(PAL_USER | PAL_ZERO);
+	frame->page = NULL;
 	// NOTE: 만약 페이지가 2개 이상 필요한 작업이면? -> 한번 pop해서는 부족하다. while 문으로 될 때까지 해야되는 것이 아닌가?
 	if (frame == NULL || frame->kva == NULL)
 		list_pop_front(&frame_table);
 	else
 		list_push_back(&frame_table, &frame->frame_elem);
-
 	ASSERT (frame != NULL);
 	ASSERT (frame->page == NULL);
 	return frame;
@@ -171,14 +171,17 @@ vm_handle_wp (struct page *page UNUSED) {
 
 /* Return true on success */
 bool
-vm_try_handle_fault (struct intr_frame *f UNUSED, void *addr UNUSED,
+vm_try_handle_fault (struct intr_frame *f UNUSED, void *addr,
 		bool user UNUSED, bool write UNUSED, bool not_present UNUSED) {
-	struct supplemental_page_table *spt UNUSED = &thread_current ()->spt;
-	struct page *page = NULL;
 	/* TODO: Validate the fault */
+	if(addr == NULL || !is_user_vaddr(addr))
+		exit(-1);
+	struct supplemental_page_table *spt = &thread_current ()->spt;
+	struct page *page = spt_find_page(&spt->pages, pg_round_down(addr));
 	/* TODO: Your code goes here */
-
-	return vm_do_claim_page (page);
+	if (page)
+		return vm_do_claim_page (page);
+	return false;
 }
 
 /* Free the page.
@@ -206,7 +209,6 @@ vm_do_claim_page (struct page *page) {
 	ASSERT (page != NULL);
 	if (page->frame != NULL)
 		return false;
-
 	// 전달받은 페이지가 이미 프레임을 할당받았는지 확인
 	struct frame *frame = vm_get_frame ();
 	frame->page = page;
