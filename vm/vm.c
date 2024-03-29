@@ -66,14 +66,15 @@ vm_alloc_page_with_initializer (enum vm_type type, void *upage, bool writable,
 	struct supplemental_page_table *spt = &thread_current ()->spt;
 	if (spt_find_page (spt, upage) == NULL) {
 		struct page *page = malloc(sizeof (struct page));
-		switch (VM_TYPE(type)){
+		switch (VM_TYPE(type)) {
 			case VM_ANON:
-				uninit_new(page, upage, init, type, aux, anon_initializer);
+				uninit_new(page, pg_round_down(upage), init, type, aux, anon_initializer);
 				break;
 			case VM_FILE:
-				uninit_new(page, upage, init, type, aux, file_backed_initializer);
+				uninit_new(page, pg_round_down(upage), init, type, aux, file_backed_initializer);
 				break;
 			default:
+				uninit_new(page, pg_round_down(upage), init, type, aux, NULL);
 				break;
 		}
 		page->writable = writable;
@@ -171,15 +172,16 @@ vm_handle_wp (struct page *page UNUSED) {
 /* Return true on success */
 bool
 vm_try_handle_fault (struct intr_frame *f UNUSED, void *addr,
-		bool user UNUSED, bool write UNUSED, bool not_present UNUSED) {
-	/* TODO: Validate the fault */
+		bool user UNUSED, bool write UNUSED, bool not_present) {
 	if(addr == NULL || !is_user_vaddr(addr))
 		exit(-1);
 	struct supplemental_page_table *spt = &thread_current ()->spt;
-	struct page *page = spt_find_page(spt, pg_round_down(addr));
-	/* TODO: Your code goes here */
-	if (page)
+	if (not_present) {
+		struct page *page = spt_find_page(spt, addr);
+		if (page == NULL)
+			return false;
 		return vm_do_claim_page (page);
+	}
 	return false;
 }
 
@@ -215,7 +217,6 @@ vm_do_claim_page (struct page *page) {
 	frame->page = page;
 	page->frame = frame;
 	// 유저 페이지가 페이지 테이블에 정상적으로 들어갔는지 확인(= 커널 가상 메모리가 반환되는지)
-	if (!pml4_set_page(thread_current()->pml4, page->va, frame->kva, true))
 	if (!pml4_set_page(thread_current()->pml4, page->va, frame->kva, page->writable)) {
 		return false;
 	}
@@ -246,7 +247,6 @@ supplemental_page_table_kill (struct supplemental_page_table *spt UNUSED) {
 	 * TODO: writeback all the modified contents to the storage. */
 }
 
-
 unsigned
 page_hash (const struct hash_elem *p_ , void *aux UNUSED) {
 	const struct page *p = hash_entry(p_, struct page, hash_elem);
@@ -267,7 +267,6 @@ page_lookup (const void *va, struct hash *pages_) {
 	struct hash_elem *e;
 	struct hash *pages = pages_;
 
-	p.va = va;
 	p.va = pg_round_down(va);
 	e = hash_find (pages, &p.hash_elem);
 	return e != NULL ? hash_entry (e, struct page, hash_elem) : NULL;
