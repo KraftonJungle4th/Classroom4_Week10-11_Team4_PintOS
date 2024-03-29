@@ -77,7 +77,7 @@ vm_alloc_page_with_initializer (enum vm_type type, void *upage, bool writable,
 				break;
 		}
 		page->writable = writable;
-		return spt_insert_page(&spt->pages, page);	
+		return spt_insert_page(spt, page);	
 	}
 err:
 	return false;
@@ -86,7 +86,7 @@ err:
 
 /* Find VA from spt and return page. On error, return NULL. */
 struct page *
-spt_find_page (struct supplemental_page_table *spt UNUSED, void *va UNUSED) {
+spt_find_page (struct supplemental_page_table *spt, void *va) {
 	struct page *page = page_lookup(va, &spt->pages);
 	return page;
 }
@@ -177,7 +177,7 @@ vm_try_handle_fault (struct intr_frame *f UNUSED, void *addr,
 	if(addr == NULL || !is_user_vaddr(addr))
 		exit(-1);
 	struct supplemental_page_table *spt = &thread_current ()->spt;
-	struct page *page = spt_find_page(&spt->pages, pg_round_down(addr));
+	struct page *page = spt_find_page(spt, pg_round_down(addr));
 	/* TODO: Your code goes here */
 	if (page)
 		return vm_do_claim_page (page);
