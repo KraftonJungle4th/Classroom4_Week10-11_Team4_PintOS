@@ -95,11 +95,10 @@ spt_find_page (struct supplemental_page_table *spt, void *va) {
 
 /* Insert PAGE into spt with validation. */
 bool
-spt_insert_page (struct supplemental_page_table *spt UNUSED,
-		struct page *page UNUSED) {
+spt_insert_page (struct supplemental_page_table *spt, struct page *page) {
 	int succ = false;
-	struct page *result = hash_insert(&spt->pages, &page->hash_elem);
-	if(result != page)
+	struct hash_elem *result = hash_insert(&spt->pages, &page->hash_elem);
+	if(result == NULL)
 		succ = true;
 	return succ;
 }
@@ -144,7 +143,7 @@ vm_evict_frame (void) {
  * space.*/
 static struct frame *
 vm_get_frame (void) {
-	struct frame *frame = malloc(sizeof frame);
+	struct frame *frame = malloc(sizeof (struct frame));
 	frame->kva = palloc_get_page(PAL_USER | PAL_ZERO);
 	frame->page = NULL;
 	// NOTE: 만약 페이지가 2개 이상 필요한 작업이면? -> 한번 pop해서는 부족하다. while 문으로 될 때까지 해야되는 것이 아닌가?
@@ -199,6 +198,8 @@ vm_claim_page (void *va) {
 	// spt에서 va를 통해 물리 페이지랑 연결한 페이지를 찾는다.
 	// 해당 페이지를 vm_do_claim_page에 전달한다.
 	struct page *page = spt_find_page(&thread_current()->spt, va);
+	if (page == NULL) 
+		return false;
 	return vm_do_claim_page (page);
 }
 
@@ -213,10 +214,11 @@ vm_do_claim_page (struct page *page) {
 	struct frame *frame = vm_get_frame ();
 	frame->page = page;
 	page->frame = frame;
-
 	// 유저 페이지가 페이지 테이블에 정상적으로 들어갔는지 확인(= 커널 가상 메모리가 반환되는지)
 	if (!pml4_set_page(thread_current()->pml4, page->va, frame->kva, true))
+	if (!pml4_set_page(thread_current()->pml4, page->va, frame->kva, page->writable)) {
 		return false;
+	}
 	return swap_in (page, frame->kva);
 }
 
@@ -266,6 +268,7 @@ page_lookup (const void *va, struct hash *pages_) {
 	struct hash *pages = pages_;
 
 	p.va = va;
+	p.va = pg_round_down(va);
 	e = hash_find (pages, &p.hash_elem);
 	return e != NULL ? hash_entry (e, struct page, hash_elem) : NULL;
 }
