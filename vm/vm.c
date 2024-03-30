@@ -5,10 +5,12 @@
 #include "vm/inspect.h"
 #include "threads/mmu.h"
 #include "threads/vaddr.h"
+#include <string.h>
 
 bool page_less (const struct hash_elem *a_, const struct hash_elem *b_ , void *aux UNUSED);
 unsigned page_hash (const struct hash_elem *p_ , void *aux UNUSED);
 struct page *page_lookup (const void *va, struct hash *pages_);
+void page_destory(const struct hash_elem *p_ , void *aux UNUSED);
 
 struct list frame_table;
 /* Initializes the virtual memory subsystem by invoking each subsystem's
@@ -227,7 +229,7 @@ vm_do_claim_page (struct page *page) {
 
 /* Initialize new supplemental page table */
 void
-supplemental_page_table_init (struct supplemental_page_table *spt UNUSED) {
+supplemental_page_table_init (struct supplemental_page_table *spt) {
 	hash_init(&spt->pages, page_hash, page_less, NULL);
 }
 
@@ -235,46 +237,50 @@ supplemental_page_table_init (struct supplemental_page_table *spt UNUSED) {
 
 /* Copy supplemental page table from src to dst */
 
-// struct uninit_page {
-// 	/* Initiate the contets of the page */
-// 	vm_initializer *init;
-// 	enum vm_type type;
-// 	void *aux;
-// 	/* Initiate the struct page and maps the pa to the va */
-// 	bool (*page_initializer) (struct page *, enum vm_type, void *kva);
-// };
-
-
 bool
-supplemental_page_table_copy (struct supplemental_page_table *dst , struct supplemental_page_table *src) {
+supplemental_page_table_copy (struct supplemental_page_table *dst, struct supplemental_page_table *src) {
 	struct hash_iterator i;
 	struct hash *dst_pages = &dst->pages;
 	struct hash *src_pages = &src->pages;
 
 	hash_first (&i, src_pages);
-	while (hash_next (&i))
-	{
+	while (hash_next (&i)) {
 		struct page *page = hash_entry (hash_cur (&i), struct page, hash_elem);
-		
-		if (page->frame == NULL)
-			vm_alloc_page_with_initializer(page->uninit.type, page->va, page->writable, page->uninit.init, page->uninit.aux);
-		else{
-			if (page->operations->type == VM_ANON)
-				vm_alloc_page(VM_ANON, page->va, page->writable);
-			if (page->operations->type == VM_FILE)
-				vm_alloc_page(VM_FILE, page->va, page->writable);
-		
-			vm_claim_page(page->va);
+		if (page->frame == NULL) {
+			if (!vm_alloc_page_with_initializer(page->uninit.type, page->va, page->writable, page->uninit.init, page->uninit.aux)) {
+				return false;
+			}
 		}
-	}	
+		else {
+			if (page_get_type(page) == VM_ANON) {
+				if (!vm_alloc_page(VM_ANON, page->va, page->writable)){
+					return false;
+				}
+			}
+			if (page_get_type(page) == VM_FILE) {
+				if (!vm_alloc_page(VM_FILE, page->va, page->writable)) {
+					return false;
+				}
+			}
+			if (!vm_claim_page(page->va)) {
+				return false;
+			}
+			// 부모 페이지에 담겨있던 데이터 복사
+			struct page *dst_page = spt_find_page(dst, page->va);
+			memcpy(dst_page->frame->kva, page->frame->kva, PGSIZE);
+		}
+	}
+	return true;
 } 
 // 보조 페이지 테이블에 의해 hold된 자원을 Free합니다.
 
 /* Free the resource hold by the supplemental page table */
 void
-supplemental_page_table_kill (struct supplemental_page_table *spt UNUSED) {
+supplemental_page_table_kill (struct supplemental_page_table *spt) {
 	/* TODO: Destroy all the supplemental_page_table hold by thread and
 	 * TODO: writeback all the modified contents to the storage. */
+	struct hash *pages = &spt->pages;
+	hash_clear(pages, page_destory);
 }
 
 unsigned
@@ -300,4 +306,10 @@ page_lookup (const void *va, struct hash *pages_) {
 	p.va = pg_round_down(va);
 	e = hash_find (pages, &p.hash_elem);
 	return e != NULL ? hash_entry (e, struct page, hash_elem) : NULL;
+}
+
+void
+page_destory(const struct hash_elem *p_ , void *aux UNUSED) {
+	const struct page *page = hash_entry (p_, struct page, hash_elem);
+	destroy(page);
 }
