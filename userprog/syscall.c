@@ -186,7 +186,7 @@ int read (int fd, void *buffer, unsigned size) {
 }
 
 int write(int fd, void *buffer, unsigned length) {
-	if(fd <0)
+	if (fd < 0)
 		exit(-1);
 
 	int byte = 0;
@@ -206,7 +206,7 @@ int write(int fd, void *buffer, unsigned length) {
 }
 
 bool create (const char *file, unsigned initial_size) {
-	if(*file == '\0')
+	if (*file == '\0')
 		exit(-1);
 	bool result = filesys_create(file, initial_size);
 	return result;
