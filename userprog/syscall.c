@@ -14,10 +14,14 @@
 #include "userprog/exception.h"
 #include "userprog/process.h"
 #include "threads/synch.h"
+#include <string.h>
+#include "devices/input.h"
 
 void syscall_entry (void);
 void syscall_handler (struct intr_frame *);
 struct file_descriptor *find_file_descriptor(int fd);
+void lock_acquire_if_available(const struct lock *);
+void lock_release_if_available(const struct lock *);
 
 void halt ();
 void exit (int status);
@@ -176,11 +180,11 @@ int read (int fd, void *buffer, unsigned size) {
 	else if (fd == 1)
 		return -1;
 	else { // 표준 입출력이 아닐 때
-		lock_acquire(&file_lock);
+		lock_acquire_if_available(&file_lock);
 		struct file_descriptor *file_desc = find_file_descriptor(fd);
 		if (file_desc == NULL) return -1;
 		byte = file_read(file_desc->file_p, buffer, size);
-		lock_release(&file_lock);
+		lock_release_if_available(&file_lock);
 	}
 	return byte;
 }
@@ -196,11 +200,11 @@ int write(int fd, void *buffer, unsigned length) {
 		putbuf(buffer, length);
 		byte = length;
 	} else { //표준 입출력이 아닐 때
-		lock_acquire(&file_lock);
+		lock_acquire_if_available(&file_lock);
 		struct file_descriptor *file_desc = find_file_descriptor(fd);
 		if (file_desc == NULL) return -1;
 		byte = file_write(file_desc->file_p, buffer, length);
-		lock_release(&file_lock);
+		lock_release_if_available(&file_lock);
 	}
 	return byte;
 }
@@ -213,13 +217,13 @@ bool create (const char *file, unsigned initial_size) {
 }
 
 int open (const char *file) {
-	lock_acquire(&file_lock);
+	lock_acquire_if_available(&file_lock);
 	struct file *opened_file = filesys_open(file);
 	int fd = -1;
 	if (opened_file != NULL) {
 	 	fd = allocate_fd(opened_file, thread_current()->fd_list);
 	}
-	lock_release(&file_lock);
+	lock_release_if_available(&file_lock);
 	return fd;
 }
 
@@ -245,17 +249,19 @@ int wait (pid_t pid) {
 int exec (const char *cmd_line) {
 	int size = strlen(cmd_line) + 1;
 	char *fn_copy = palloc_get_page(0);
-	if ((fn_copy) == NULL) {
+	if (fn_copy == NULL) {
 		exit(-1);
 	}
 	strlcpy(fn_copy, cmd_line, size);
+	lock_acquire_if_available(&file_lock);
 	if (process_exec(fn_copy) == -1) {
 		exit(-1);
 	}
+	return -1;
 }
 
 void seek (int fd, unsigned position) {
-	if (fd < 2 || position < 0)
+	if (fd < 2)
 		exit(-1);
 	struct file *opened_file = find_file_descriptor(fd)->file_p;
 	file_seek(opened_file, position);
@@ -269,8 +275,20 @@ unsigned tell (int fd) {
 }
 
 bool remove(const char *file) {
-	lock_acquire(&file_lock);
+	lock_acquire_if_available(&file_lock);
 	bool result = filesys_remove(file);
-	lock_release(&file_lock);
+	lock_release_if_available(&file_lock);
     return result;
+}
+
+void lock_acquire_if_available(const struct lock *lock) {
+	if (!lock_held_by_current_thread(lock)) {
+		lock_acquire(lock);
+	}
+}
+
+void lock_release_if_available(const struct lock *lock) {
+	if (lock_held_by_current_thread(lock)) {
+		lock_release(lock);
+	}
 }

@@ -21,7 +21,8 @@
 #include "intrinsic.h"
 #include "userprog/syscall.h"
 #include "threads/malloc.h"
-
+#include "hash.h"
+#define VM
 #ifdef VM
 #include "vm/vm.h"
 #endif
@@ -227,19 +228,17 @@ process_exec (void *f_name) {
 	/* We first kill the current context */
 	process_cleanup ();
 
-	lock_acquire(&file_lock);
 	/* And then load the binary */
 	success = load (file_name, &_if);
-	lock_release(&file_lock);
+	palloc_free_page (file_name);
 
 	/* If load failed, quit. */
-	palloc_free_page (file_name);
 	if (!success) {
 		file_close(thread_current()->executable);
 		thread_current()->executable = NULL;
 		return -1;
 	}
-
+	lock_release_if_available(&file_lock);
 	/* Start switched process. */
 	do_iret (&_if);
 	NOT_REACHED ();
@@ -260,7 +259,6 @@ process_wait (tid_t child_tid UNUSED) {
 	struct thread *child = find_child_by(child_tid);
 	if (TID_ERROR == child || !sema_try_down(&child->wait_sema))
 		return -1;
-
 	sema_down(&child->wait_sema);
 	list_remove(&child->child_elem);
 	sema_up(&child->exit_sema); // 동기화를 위한 종료 세마포어
@@ -275,6 +273,7 @@ process_exit (void) {
 	file_close(curr->executable);
 	sema_down(&curr->exit_sema); // 동기화를 위한 종료 세마포어
 	fdlist_cleanup(curr);
+	lock_release_if_available(&file_lock);
 	process_cleanup ();
 }
 
@@ -282,9 +281,9 @@ process_exit (void) {
 static void
 process_cleanup (void) {
 	struct thread *curr = thread_current ();
-
 #ifdef VM
-	supplemental_page_table_kill (&curr->spt);
+	if (!hash_empty(&(curr->spt.pages)))
+		supplemental_page_table_kill (&curr->spt);
 #endif
 	uint64_t *pml4;
 	/* Destroy the current process's page directory and switch back
@@ -710,9 +709,6 @@ install_page (void *upage, void *kpage, bool writable) {
 
 static bool
 lazy_load_segment (struct page *page, void *aux) {
-	/* TODO: Load the segment from the file */
-	/* TODO: This called when the first page fault occurs on address VA. */
-	/* TODO: VA is available when calling this function. */
 	// 두 인자값을 이용하여 세그먼트를 읽을 파일을 찾고 최종적으로는 세그먼트를 메모리에서 읽어야 함
 	struct lazy_aux *lazy_aux = (struct lazy_aux *) aux;
 	struct file *file = lazy_aux->file;
@@ -727,7 +723,6 @@ lazy_load_segment (struct page *page, void *aux) {
 		return false;
 	}
 	memset (kpage + page_read_bytes, 0, page_zero_bytes);
-	free(lazy_aux);
 	return true;
 }
 
