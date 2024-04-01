@@ -8,9 +8,9 @@
 #include <string.h>
 
 bool page_less (const struct hash_elem *a_, const struct hash_elem *b_ , void *aux UNUSED);
-unsigned page_hash (const struct hash_elem *p_ , void *aux UNUSED);
+unsigned page_hash (const struct hash_elem *p_, void *aux UNUSED);
 struct page *page_lookup (const void *va, struct hash *pages_);
-void page_destory(const struct hash_elem *p_ , void *aux UNUSED);
+void page_destroy(const struct hash_elem *p_, void *aux UNUSED);
 
 struct list frame_table;
 /* Initializes the virtual memory subsystem by invoking each subsystem's
@@ -240,27 +240,20 @@ supplemental_page_table_init (struct supplemental_page_table *spt) {
 bool
 supplemental_page_table_copy (struct supplemental_page_table *dst, struct supplemental_page_table *src) {
 	struct hash_iterator i;
-	struct hash *dst_pages = &dst->pages;
 	struct hash *src_pages = &src->pages;
 
 	hash_first (&i, src_pages);
 	while (hash_next (&i)) {
 		struct page *page = hash_entry (hash_cur (&i), struct page, hash_elem);
-		if (page->frame == NULL) {
-			if (!vm_alloc_page_with_initializer(page->uninit.type, page->va, page->writable, page->uninit.init, page->uninit.aux)) {
+		enum vm_type type = page->operations->type;
+		if (type == VM_UNINIT) { // UNINIT
+			if (!vm_alloc_page_with_initializer(page_get_type(page), page->va, page->writable, page->uninit.init, page->uninit.aux)) {
 				return false;
 			}
 		}
-		else {
-			if (page_get_type(page) == VM_ANON) {
-				if (!vm_alloc_page(VM_ANON, page->va, page->writable)){
-					return false;
-				}
-			}
-			if (page_get_type(page) == VM_FILE) {
-				if (!vm_alloc_page(VM_FILE, page->va, page->writable)) {
-					return false;
-				}
+		else { // ANON, FILE
+			if (!vm_alloc_page(page_get_type(page), page->va, page->writable)) {
+				return false;
 			}
 			if (!vm_claim_page(page->va)) {
 				return false;
@@ -277,16 +270,14 @@ supplemental_page_table_copy (struct supplemental_page_table *dst, struct supple
 /* Free the resource hold by the supplemental page table */
 void
 supplemental_page_table_kill (struct supplemental_page_table *spt) {
-	/* TODO: Destroy all the supplemental_page_table hold by thread and
-	 * TODO: writeback all the modified contents to the storage. */
 	struct hash *pages = &spt->pages;
-	hash_clear(pages, page_destory);
+	hash_clear(pages, page_destroy);
 }
 
 unsigned
 page_hash (const struct hash_elem *p_ , void *aux UNUSED) {
 	const struct page *p = hash_entry(p_, struct page, hash_elem);
-	return hash_bytes (&p->va, sizeof p->va);
+	return hash_bytes (&p->va, sizeof (p->va));
 }
 
 bool
@@ -309,7 +300,7 @@ page_lookup (const void *va, struct hash *pages_) {
 }
 
 void
-page_destory(const struct hash_elem *p_ , void *aux UNUSED) {
+page_destroy(const struct hash_elem *p_ , void *aux UNUSED) {
 	const struct page *page = hash_entry (p_, struct page, hash_elem);
-	destroy(page);
+	vm_dealloc_page(page);
 }
