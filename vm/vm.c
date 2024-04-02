@@ -7,6 +7,9 @@
 #include "threads/vaddr.h"
 #include <string.h>
 
+#define STACK_MAX USER_STACK - (PGSIZE * 256) // 1 MB
+#define VM_STACK VM_ANON | VM_MARKER_0
+
 bool page_less (const struct hash_elem *a_, const struct hash_elem *b_ , void *aux UNUSED);
 unsigned page_hash (const struct hash_elem *p_, void *aux UNUSED);
 struct page *page_lookup (const void *va, struct hash *pages_);
@@ -162,6 +165,16 @@ vm_get_frame (void) {
 /* Growing the stack. */
 static void
 vm_stack_growth (void *addr UNUSED) {
+	struct thread *t = thread_current();
+	void *target_page = pg_round_down(addr);
+	void *cur_page = pg_round_down(t->user_rsp);
+	while (cur_page > target_page && cur_page > STACK_MAX) {
+		cur_page -= PGSIZE;
+		if (!vm_alloc_page(VM_STACK, cur_page, true) || !vm_claim_page(cur_page)) {
+			addr = NULL;
+			return;
+		}
+	}
 }
 
 // write_protected 페이지의 fault를 핸들링합니다.
@@ -173,16 +186,30 @@ vm_handle_wp (struct page *page UNUSED) {
 
 /* Return true on success */
 bool
-vm_try_handle_fault (struct intr_frame *f UNUSED, void *addr,
+vm_try_handle_fault (struct intr_frame *f, void *addr,
 		bool user UNUSED, bool write UNUSED, bool not_present) {
 	if(addr == NULL || !is_user_vaddr(addr))
 		exit(-1);
 	struct supplemental_page_table *spt = &thread_current ()->spt;
+	struct page *page = spt_find_page(spt, addr);
+	struct thread *t = thread_current();
+
 	if (not_present) {
-		struct page *page = spt_find_page(spt, addr);
-		if (page == NULL)
-			return false;
-		return vm_do_claim_page (page);
+		if (page != NULL) {
+			return vm_do_claim_page (page);
+		}
+		uintptr_t rsp = user ? f->rsp : t->user_rsp;
+		uintptr_t PUSH_INSTRUCTION = rsp - 8;
+		// check valid address
+		if (addr < USER_STACK && (rsp <= addr || addr == PUSH_INSTRUCTION)) {
+			vm_stack_growth(addr);
+			if (addr == NULL) {
+				return false;
+			}
+			return true;
+		}
+		return false;
+	}
 	}
 	return false;
 }
