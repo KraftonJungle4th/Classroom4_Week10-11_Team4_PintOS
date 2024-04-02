@@ -238,7 +238,6 @@ process_exec (void *f_name) {
 		thread_current()->executable = NULL;
 		return -1;
 	}
-	lock_release_if_available(&file_lock);
 	/* Start switched process. */
 	do_iret (&_if);
 	NOT_REACHED ();
