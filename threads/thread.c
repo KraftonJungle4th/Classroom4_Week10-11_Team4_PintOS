@@ -232,9 +232,11 @@ thread_create (const char *name, int priority,
 	#endif
 	/* Add to run queue. */
 	thread_unblock (t);
+	#ifdef USERPROG
 	t->fd_list = palloc_get_multiple(PAL_ZERO, 2);
 	if (NULL == t->fd_list)
 		return TID_ERROR;
+	#endif
 	if (thread_get_priority() < priority) {
 		thread_yield();
 	}

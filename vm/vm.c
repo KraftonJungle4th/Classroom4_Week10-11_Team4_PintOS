@@ -76,7 +76,7 @@ vm_alloc_page_with_initializer (enum vm_type type, void *upage, bool writable,
 				uninit_new(page, pg_round_down(upage), init, type, aux, file_backed_initializer);
 				break;
 			default:
-				uninit_new(page, pg_round_down(upage), init, type, aux, NULL);
+				PANIC("UNKNOWN TYPE : YOU SHOULD CHECK VM_TYPE");
 				break;
 		}
 		page->writable = writable;
