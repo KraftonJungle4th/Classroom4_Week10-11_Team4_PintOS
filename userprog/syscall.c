@@ -16,6 +16,7 @@
 #include "threads/synch.h"
 #include <string.h>
 #include "devices/input.h"
+#include "vm/vm.h"
 
 void syscall_entry (void);
 void syscall_handler (struct intr_frame *);
@@ -169,7 +170,7 @@ void exit(int status) {
 }
  
 int read (int fd, void *buffer, unsigned size) {
-	if(fd <0)
+	if (fd < 0)
 		exit(-1);
 	int byte = 0;
 	if (fd == 0) {
@@ -181,6 +182,11 @@ int read (int fd, void *buffer, unsigned size) {
 	else if (fd == 1)
 		return -1;
 	else { // 표준 입출력이 아닐 때
+		// read시 읽어온 데이터를 담을 buffer가 페이지인 경우, 쓰기가 허용되어있는 지 판단
+		struct page *page = spt_find_page(&thread_current()->spt, buffer);
+		if (page != NULL && !page->writable) {
+			exit(-1);
+		}
 		lock_acquire_if_available(&file_lock);
 		struct file_descriptor *file_desc = find_file_descriptor(fd);
 		if (file_desc == NULL) return -1;
@@ -254,7 +260,6 @@ int exec (const char *cmd_line) {
 		exit(-1);
 	}
 	strlcpy(fn_copy, cmd_line, size);
-	lock_acquire_if_available(&file_lock);
 	if (process_exec(fn_copy) == -1) {
 		exit(-1);
 	}
