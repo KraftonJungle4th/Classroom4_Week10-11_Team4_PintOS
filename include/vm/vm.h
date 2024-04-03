@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include "threads/palloc.h"
 #include "hash.h"
+#include "filesys/off_t.h"
 
 enum vm_type {
 	/* page not initialized */
@@ -123,4 +124,5 @@ void vm_dealloc_page (struct page *page);
 bool vm_claim_page (void *va);
 enum vm_type page_get_type (struct page *page);
 
+bool lazy_load_file(struct page *page, void *aux);
 #endif  /* VM_VM_H */

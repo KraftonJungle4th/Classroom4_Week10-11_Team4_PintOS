@@ -39,6 +39,9 @@ void seek (int fd, unsigned position);
 unsigned tell (int fd);
 bool remove(const char *file);
 
+void *mmap (void *addr, size_t length, int writable, int fd, off_t offset);
+void munmap (void *addr);
+
 /* Reads a byte at user virtual address UADDR.
  * UADDR must be below KERN_BASE.
  * Returns the byte value if successful, -1 if a segfault
@@ -133,6 +136,12 @@ syscall_handler (struct intr_frame *f UNUSED) {
 			break;
 		case SYS_CLOSE:
 			close(f->R.rdi);
+			break;
+		case SYS_MMAP:
+			f->R.rax = mmap(f->R.rdi, f->R.rsi, f->R.rdx, f->R.r10, f->R.r8);
+			break;
+		case SYS_MUNMAP:
+			munmap(f->R.rdi);
 			break;
 		default:
 			break;
@@ -285,6 +294,31 @@ bool remove(const char *file) {
 	bool result = filesys_remove(file);
 	lock_release_if_available(&file_lock);
     return result;
+}
+
+void *mmap (void *addr, size_t length, int writable, int fd, off_t offset) {
+	if (addr == NULL || pg_ofs(addr) != 0 || (signed long) length <= 0 || !is_user_vaddr(addr) || !is_user_vaddr(addr + length)) {
+		return NULL;
+	}
+	if (length < offset) {
+		return NULL;
+	}
+	if (fd <= 1) {
+		exit(-1);
+	}
+	struct file_descriptor *file_desc = find_file_descriptor(fd);
+	if (file_desc == NULL || file_length(file_desc->file_p) == 0) {
+		return NULL;
+	}
+	struct file *file = file_reopen(file_desc->file_p);
+	if (file == NULL) {
+		return NULL;
+	}
+	return do_mmap(addr, length, writable, file, offset);
+}
+
+void munmap (void *addr) {
+	do_munmap(addr);
 }
 
 void lock_acquire_if_available(const struct lock *lock) {

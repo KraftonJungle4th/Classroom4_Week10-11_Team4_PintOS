@@ -111,8 +111,9 @@ spt_insert_page (struct supplemental_page_table *spt, struct page *page) {
 
 void
 spt_remove_page (struct supplemental_page_table *spt, struct page *page) {
-	vm_dealloc_page (page);
-	return true;
+	struct hash *pages = &spt->pages;
+	hash_delete(pages, &page->hash_elem);
+	vm_dealloc_page(page);
 }
 
 // struct frame을 확보하십시오. 그것은 evicted 될 것입니다.
