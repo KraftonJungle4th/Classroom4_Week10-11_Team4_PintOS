@@ -120,9 +120,8 @@ spt_remove_page (struct supplemental_page_table *spt, struct page *page) {
 /* Get the struct frame, that will be evicted. */
 static struct frame *
 vm_get_victim (void) {
-	struct frame *victim = NULL;
-	 /* TODO: The policy for eviction is up to you. */
-
+	// FIFO
+	struct frame *victim = list_entry(list_pop_front(&frame_table), struct frame, frame_elem);
 	return victim;
 }
 
@@ -133,10 +132,9 @@ vm_get_victim (void) {
  * Return NULL on error.*/
 static struct frame *
 vm_evict_frame (void) {
-	struct frame *victim UNUSED = vm_get_victim ();
-	/* TODO: swap out the victim and return the evicted frame. */
-
-	return NULL;
+	struct frame *victim = vm_get_victim ();
+	swap_out(victim->page);
+	return victim;
 }
 
 // palloc() 하고 frame을 얻습니다. 만약 이용가능한 페이지가 없다면 페이지를 evict하고 그 페이지를 return합니다.
@@ -152,9 +150,10 @@ vm_get_frame (void) {
 	struct frame *frame = malloc(sizeof (struct frame));
 	frame->kva = palloc_get_page(PAL_USER | PAL_ZERO);
 	frame->page = NULL;
-	// NOTE: 만약 페이지가 2개 이상 필요한 작업이면? -> 한번 pop해서는 부족하다. while 문으로 될 때까지 해야되는 것이 아닌가?
-	if (frame == NULL || frame->kva == NULL)
-		list_pop_front(&frame_table);
+	if (frame->kva == NULL) {
+		frame = vm_get_victim();
+		frame->page = NULL;
+	}
 	else
 		list_push_back(&frame_table, &frame->frame_elem);
 	ASSERT (frame != NULL);
