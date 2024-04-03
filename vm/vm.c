@@ -199,8 +199,7 @@ vm_try_handle_fault (struct intr_frame *f, void *addr,
 		}
 		uintptr_t rsp = user ? f->rsp : t->user_rsp;
 		uintptr_t PUSH_INSTRUCTION = rsp - 8;
-		// check valid address
-		if (addr < USER_STACK && (rsp <= addr || addr == PUSH_INSTRUCTION)) {
+		if (addr < USER_STACK && addr == PUSH_INSTRUCTION) {
 			vm_stack_growth(addr);
 			if (addr == NULL) {
 				return false;
