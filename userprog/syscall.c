@@ -216,6 +216,10 @@ int write(int fd, void *buffer, unsigned length) {
 		putbuf(buffer, length);
 		byte = length;
 	} else { //표준 입출력이 아닐 때
+		struct page *page = spt_find_page(&thread_current()->spt, buffer);
+		if (page != NULL && !page->writable) {
+			exit(-1);
+		}
 		lock_acquire_if_available(&file_lock);
 		struct file_descriptor *file_desc = find_file_descriptor(fd);
 		if (file_desc == NULL) return -1;
