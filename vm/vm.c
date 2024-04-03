@@ -249,7 +249,9 @@ vm_do_claim_page (struct page *page) {
 	if (!pml4_set_page(thread_current()->pml4, page->va, frame->kva, page->writable)) {
 		return false;
 	}
-	return swap_in (page, frame->kva);
+	swap_in (page, frame->kva);
+	return true;
+	// return swap_in (page, frame->kva);
 }
 
 // 새로운 보조 페이지 테이블을 초기화합니다.
