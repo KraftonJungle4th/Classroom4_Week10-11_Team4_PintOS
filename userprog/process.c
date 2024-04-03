@@ -268,12 +268,13 @@ process_wait (tid_t child_tid UNUSED) {
 void
 process_exit (void) {
 	struct thread *curr = thread_current ();
-	sema_up(&curr->wait_sema);
 	file_close(curr->executable);
+	process_cleanup ();
+	hash_destroy(&curr->spt.pages, NULL);
+	sema_up(&curr->wait_sema);
 	sema_down(&curr->exit_sema); // 동기화를 위한 종료 세마포어
 	fdlist_cleanup(curr);
 	lock_release_if_available(&file_lock);
-	process_cleanup ();
 }
 
 /* Free the current process's resources. */
