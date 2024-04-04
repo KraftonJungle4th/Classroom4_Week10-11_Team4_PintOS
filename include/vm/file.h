@@ -7,6 +7,10 @@ struct page;
 enum vm_type;
 
 struct file_page {
+	struct file *pending_file;
+	size_t length;
+	off_t offset;
+	bool has_next;
 };
 
 void vm_file_init (void);

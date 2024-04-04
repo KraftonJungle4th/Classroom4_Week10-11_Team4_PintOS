@@ -2,6 +2,8 @@
 #define VM_VM_H
 #include <stdbool.h>
 #include "threads/palloc.h"
+#include "hash.h"
+#include "filesys/off_t.h"
 
 enum vm_type {
 	/* page not initialized */
@@ -44,13 +46,14 @@ struct page {
 	const struct page_operations *operations;
 	void *va;              /* Address in terms of user space */
 	struct frame *frame;   /* Back reference for frame */
-
+	bool writable;
 	/* Your implementation */
+	struct hash_elem hash_elem;
 
 	/* Per-type data are binded into the union.
 	 * Each function automatically detects the current union */
 	union {
-		struct uninit_page uninit;
+		struct uninit_page uninit; // 지연 로딩을 위한 초기화되지 않은 페이지
 		struct anon_page anon;
 		struct file_page file;
 #ifdef EFILESYS
@@ -63,7 +66,13 @@ struct page {
 struct frame {
 	void *kva;
 	struct page *page;
+	struct list_elem frame_elem;
 };
+
+// 페이지 operations를 위한 함수 테이블입니다. 
+// 이것은 C언어의 "인터페이스"를 도구화 하기 위한 방법중 하나입니다.
+// "method"의 테이블을 struct의 멤버에 추가하세요.
+// 원하는 대로 이름을 지어도 됩니다.
 
 /* The function table for page operations.
  * This is one way of implementing "interface" in C.
@@ -81,10 +90,15 @@ struct page_operations {
 #define destroy(page) \
 	if ((page)->operations->destroy) (page)->operations->destroy (page)
 
+// current process의 메모리 공간을 나타냅니다.
+// 우리는 이 struct를 위한 특정한 디자인을 강요하지 않습니다.
+// 자유롭게 구조를 디자인 해보세요.
+
 /* Representation of current process's memory space.
  * We don't want to force you to obey any specific design for this struct.
  * All designs up to you for this. */
 struct supplemental_page_table {
+	struct hash pages;
 };
 
 #include "threads/thread.h"
@@ -96,6 +110,7 @@ struct page *spt_find_page (struct supplemental_page_table *spt,
 		void *va);
 bool spt_insert_page (struct supplemental_page_table *spt, struct page *page);
 void spt_remove_page (struct supplemental_page_table *spt, struct page *page);
+struct page *spt_find_page (struct supplemental_page_table *spt, void *va);
 
 void vm_init (void);
 bool vm_try_handle_fault (struct intr_frame *f, void *addr, bool user,
@@ -109,4 +124,5 @@ void vm_dealloc_page (struct page *page);
 bool vm_claim_page (void *va);
 enum vm_type page_get_type (struct page *page);
 
+bool lazy_load_file(struct page *page, void *aux);
 #endif  /* VM_VM_H */

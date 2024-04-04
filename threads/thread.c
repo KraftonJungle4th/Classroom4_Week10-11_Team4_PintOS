@@ -71,6 +71,7 @@ static void schedule (void);
 static tid_t allocate_tid (void);
 
 bool high_priority_first (const struct list_elem *a_, const struct list_elem *b_, void *aux UNUSED);
+bool thread_can_wakeup (int64_t curr_tick);
 /* Returns true if T appears to point to a valid thread. */
 #define is_thread(t) ((t) != NULL && (t)->magic == THREAD_MAGIC)
 
@@ -231,9 +232,11 @@ thread_create (const char *name, int priority,
 	#endif
 	/* Add to run queue. */
 	thread_unblock (t);
+	#ifdef USERPROG
 	t->fd_list = palloc_get_multiple(PAL_ZERO, 2);
 	if (NULL == t->fd_list)
 		return TID_ERROR;
+	#endif
 	if (thread_get_priority() < priority) {
 		thread_yield();
 	}

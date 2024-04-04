@@ -180,7 +180,7 @@ hash_apply (struct hash *h, hash_action_func *action) {
    Modifying hash table H during iteration, using any of the
    functions hash_clear(), hash_destroy(), hash_insert(),
    hash_replace(), or hash_delete(), invalidates all
-   iterators. */
+   iterators. */ 
 void
 hash_first (struct hash_iterator *i, struct hash *h) {
 	ASSERT (i != NULL);

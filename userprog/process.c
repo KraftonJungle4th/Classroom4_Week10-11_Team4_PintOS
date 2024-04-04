@@ -21,7 +21,8 @@
 #include "intrinsic.h"
 #include "userprog/syscall.h"
 #include "threads/malloc.h"
-
+#include "hash.h"
+#define VM
 #ifdef VM
 #include "vm/vm.h"
 #endif
@@ -82,7 +83,7 @@ initd (void *f_name) {
 /* Clones the current process as `name`. Returns the new process's thread id, or
  * TID_ERROR if the thread cannot be created. */
 tid_t
-process_fork (const char *name, struct intr_frame *if_ UNUSED) {
+process_fork (const char *name, struct intr_frame *if_) {
 	/* Clone current thread to new thread.*/
 	void *aux[2] = {thread_current(), if_};
 	pid_t pid = thread_create (name, PRI_DEFAULT, __do_fork, aux);
@@ -187,8 +188,9 @@ __do_fork (void *aux) {
 	process_activate (current);
 #ifdef VM
 	supplemental_page_table_init (&current->spt);
-	if (!supplemental_page_table_copy (&current->spt, &parent->spt))
+	if (!supplemental_page_table_copy (&current->spt, &parent->spt)) {
 		goto error;
+	}
 #else
 	if (!pml4_for_each (parent->pml4, duplicate_pte, parent))
 		goto error;
@@ -226,19 +228,17 @@ process_exec (void *f_name) {
 	/* We first kill the current context */
 	process_cleanup ();
 
-	lock_acquire(&file_lock);
 	/* And then load the binary */
 	success = load (file_name, &_if);
-	lock_release(&file_lock);
+	palloc_free_page (file_name);
 
 	/* If load failed, quit. */
-	palloc_free_page (file_name);
 	if (!success) {
 		file_close(thread_current()->executable);
 		thread_current()->executable = NULL;
 		return -1;
 	}
-
+	lock_release_if_available(&file_lock);
 	/* Start switched process. */
 	do_iret (&_if);
 	NOT_REACHED ();
@@ -259,7 +259,6 @@ process_wait (tid_t child_tid UNUSED) {
 	struct thread *child = find_child_by(child_tid);
 	if (TID_ERROR == child || !sema_try_down(&child->wait_sema))
 		return -1;
-
 	sema_down(&child->wait_sema);
 	list_remove(&child->child_elem);
 	sema_up(&child->exit_sema); // 동기화를 위한 종료 세마포어
@@ -270,20 +269,22 @@ process_wait (tid_t child_tid UNUSED) {
 void
 process_exit (void) {
 	struct thread *curr = thread_current ();
-	sema_up(&curr->wait_sema);
 	file_close(curr->executable);
+	process_cleanup ();
+	hash_destroy(&curr->spt.pages, NULL);
+	sema_up(&curr->wait_sema);
 	sema_down(&curr->exit_sema); // 동기화를 위한 종료 세마포어
 	fdlist_cleanup(curr);
-	process_cleanup ();
+	lock_release_if_available(&file_lock);
 }
 
 /* Free the current process's resources. */
 static void
 process_cleanup (void) {
 	struct thread *curr = thread_current ();
-
 #ifdef VM
-	supplemental_page_table_kill (&curr->spt);
+	if (!hash_empty(&(curr->spt.pages)))
+		supplemental_page_table_kill (&curr->spt);
 #endif
 	uint64_t *pml4;
 	/* Destroy the current process's page directory and switch back
@@ -550,7 +551,6 @@ load (const char *file_name, struct intr_frame *if_) {
 
 	file_deny_write(file);
 	thread_current()->executable = file;
-
 	// hex_dump(if_->rsp, if_->rsp, USER_STACK - if_->rsp, true); // 시작 지점, 출력할 데이터가 담겨있는 포인터, 출력할 크기, (추가 내용) 아스키 코드로 변환 여부)
 	success = true;
 
@@ -710,9 +710,21 @@ install_page (void *upage, void *kpage, bool writable) {
 
 static bool
 lazy_load_segment (struct page *page, void *aux) {
-	/* TODO: Load the segment from the file */
-	/* TODO: This called when the first page fault occurs on address VA. */
-	/* TODO: VA is available when calling this function. */
+	// 두 인자값을 이용하여 세그먼트를 읽을 파일을 찾고 최종적으로는 세그먼트를 메모리에서 읽어야 함
+	struct lazy_aux *lazy_aux = (struct lazy_aux *) aux;
+	struct file *file = lazy_aux->file;
+	size_t page_read_bytes = lazy_aux->page_read_bytes;
+	size_t page_zero_bytes = PGSIZE - page_read_bytes;
+	off_t ofs = lazy_aux->ofs;
+	void *kpage = page->frame->kva;
+
+	file_seek(file, ofs);
+	/* Load this page. */
+	if (file_read (file, kpage, page_read_bytes) != (int) page_read_bytes) {
+		return false;
+	}
+	memset (kpage + page_read_bytes, 0, page_zero_bytes);
+	return true;
 }
 
 /* Loads a segment starting at offset OFS in FILE at address
@@ -736,23 +748,27 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 	ASSERT (pg_ofs (upage) == 0);
 	ASSERT (ofs % PGSIZE == 0);
 
+	file_seek(file, ofs);
 	while (read_bytes > 0 || zero_bytes > 0) {
 		/* Do calculate how to fill this page.
 		 * We will read PAGE_READ_BYTES bytes from FILE
 		 * and zero the final PAGE_ZERO_BYTES bytes. */
-		size_t page_read_bytes = read_bytes < PGSIZE ? read_bytes : PGSIZE;
-		size_t page_zero_bytes = PGSIZE - page_read_bytes;
+		size_t page_read_bytes = read_bytes < PGSIZE ? read_bytes : PGSIZE; // 파일로부터 읽을 바이트의 수
+		size_t page_zero_bytes = PGSIZE - page_read_bytes; // 0으로 채워야 할 바이트의 수
 
-		/* TODO: Set up aux to pass information to the lazy_load_segment. */
-		void *aux = NULL;
-		if (!vm_alloc_page_with_initializer (VM_ANON, upage,
-					writable, lazy_load_segment, aux))
+		struct lazy_aux *lazy_aux = malloc(sizeof (struct lazy_aux));
+		lazy_aux->file = file;
+		lazy_aux->page_read_bytes = page_read_bytes;
+		lazy_aux->ofs = ofs;
+
+		if (!vm_alloc_page_with_initializer (VM_ANON, upage, writable, lazy_load_segment, lazy_aux))
 			return false;
 
 		/* Advance. */
 		read_bytes -= page_read_bytes;
 		zero_bytes -= page_zero_bytes;
 		upage += PGSIZE;
+		ofs += page_read_bytes;
 	}
 	return true;
 }
@@ -762,12 +778,11 @@ static bool
 setup_stack (struct intr_frame *if_) {
 	bool success = false;
 	void *stack_bottom = (void *) (((uint8_t *) USER_STACK) - PGSIZE);
-
-	/* TODO: Map the stack on stack_bottom and claim the page immediately.
-	 * TODO: If success, set the rsp accordingly.
-	 * TODO: You should mark the page is stack. */
-	/* TODO: Your code goes here */
-
+	enum vm_type type = VM_ANON | VM_MARKER_0;
+	if (!vm_alloc_page(type, stack_bottom, true) || !vm_claim_page(stack_bottom))
+		return success;
+	success = true;
+	if_->rsp = USER_STACK;
 	return success;
 }
 #endif /* VM */

@@ -14,10 +14,15 @@
 #include "userprog/exception.h"
 #include "userprog/process.h"
 #include "threads/synch.h"
+#include <string.h>
+#include "devices/input.h"
+#include "vm/vm.h"
 
 void syscall_entry (void);
 void syscall_handler (struct intr_frame *);
 struct file_descriptor *find_file_descriptor(int fd);
+void lock_acquire_if_available(const struct lock *);
+void lock_release_if_available(const struct lock *);
 
 void halt ();
 void exit (int status);
@@ -33,6 +38,9 @@ int exec (const char *cmd_line);
 void seek (int fd, unsigned position);
 unsigned tell (int fd);
 bool remove(const char *file);
+
+void *mmap (void *addr, size_t length, int writable, int fd, off_t offset);
+void munmap (void *addr);
 
 /* Reads a byte at user virtual address UADDR.
  * UADDR must be below KERN_BASE.
@@ -83,6 +91,7 @@ syscall_init (void) {
 void
 syscall_handler (struct intr_frame *f UNUSED) {
 	int syscall_num = f->R.rax;
+	thread_current()->user_rsp = f->rsp;
 	switch (syscall_num) {
 		case SYS_HALT:
 			halt();
@@ -128,6 +137,12 @@ syscall_handler (struct intr_frame *f UNUSED) {
 		case SYS_CLOSE:
 			close(f->R.rdi);
 			break;
+		case SYS_MMAP:
+			f->R.rax = mmap(f->R.rdi, f->R.rsi, f->R.rdx, f->R.r10, f->R.r8);
+			break;
+		case SYS_MUNMAP:
+			munmap(f->R.rdi);
+			break;
 		default:
 			break;
 	}
@@ -164,7 +179,7 @@ void exit(int status) {
 }
  
 int read (int fd, void *buffer, unsigned size) {
-	if(fd <0)
+	if (fd < 0)
 		exit(-1);
 	int byte = 0;
 	if (fd == 0) {
@@ -176,17 +191,22 @@ int read (int fd, void *buffer, unsigned size) {
 	else if (fd == 1)
 		return -1;
 	else { // 표준 입출력이 아닐 때
-		lock_acquire(&file_lock);
+		// read시 읽어온 데이터를 담을 buffer가 페이지인 경우, 쓰기가 허용되어있는 지 판단
+		struct page *page = spt_find_page(&thread_current()->spt, buffer);
+		if (page != NULL && !page->writable) {
+			exit(-1);
+		}
+		lock_acquire_if_available(&file_lock);
 		struct file_descriptor *file_desc = find_file_descriptor(fd);
 		if (file_desc == NULL) return -1;
 		byte = file_read(file_desc->file_p, buffer, size);
-		lock_release(&file_lock);
+		lock_release_if_available(&file_lock);
 	}
 	return byte;
 }
 
 int write(int fd, void *buffer, unsigned length) {
-	if(fd <0)
+	if (fd < 0)
 		exit(-1);
 
 	int byte = 0;
@@ -196,30 +216,32 @@ int write(int fd, void *buffer, unsigned length) {
 		putbuf(buffer, length);
 		byte = length;
 	} else { //표준 입출력이 아닐 때
-		lock_acquire(&file_lock);
+		lock_acquire_if_available(&file_lock);
 		struct file_descriptor *file_desc = find_file_descriptor(fd);
 		if (file_desc == NULL) return -1;
 		byte = file_write(file_desc->file_p, buffer, length);
-		lock_release(&file_lock);
+		lock_release_if_available(&file_lock);
 	}
 	return byte;
 }
 
 bool create (const char *file, unsigned initial_size) {
-	if(*file == '\0')
+	if (*file == '\0')
 		exit(-1);
+	lock_acquire_if_available(&file_lock);
 	bool result = filesys_create(file, initial_size);
+	lock_release_if_available(&file_lock);
 	return result;
 }
 
 int open (const char *file) {
-	lock_acquire(&file_lock);
+	lock_acquire_if_available(&file_lock);
 	struct file *opened_file = filesys_open(file);
 	int fd = -1;
 	if (opened_file != NULL) {
 	 	fd = allocate_fd(opened_file, thread_current()->fd_list);
 	}
-	lock_release(&file_lock);
+	lock_release_if_available(&file_lock);
 	return fd;
 }
 
@@ -245,17 +267,20 @@ int wait (pid_t pid) {
 int exec (const char *cmd_line) {
 	int size = strlen(cmd_line) + 1;
 	char *fn_copy = palloc_get_page(0);
-	if ((fn_copy) == NULL) {
+	if (fn_copy == NULL) {
 		exit(-1);
 	}
 	strlcpy(fn_copy, cmd_line, size);
+	lock_acquire_if_available(&file_lock);
 	if (process_exec(fn_copy) == -1) {
 		exit(-1);
 	}
+	lock_release_if_available(&file_lock);
+	return -1;
 }
 
 void seek (int fd, unsigned position) {
-	if (fd < 2 || position < 0)
+	if (fd < 2)
 		exit(-1);
 	struct file *opened_file = find_file_descriptor(fd)->file_p;
 	file_seek(opened_file, position);
@@ -269,8 +294,45 @@ unsigned tell (int fd) {
 }
 
 bool remove(const char *file) {
-	lock_acquire(&file_lock);
+	lock_acquire_if_available(&file_lock);
 	bool result = filesys_remove(file);
-	lock_release(&file_lock);
+	lock_release_if_available(&file_lock);
     return result;
+}
+
+void *mmap (void *addr, size_t length, int writable, int fd, off_t offset) {
+	if (addr == NULL || pg_ofs(addr) != 0 || (signed long) length <= 0 || !is_user_vaddr(addr) || !is_user_vaddr(addr + length)) {
+		return NULL;
+	}
+	if (length < offset) {
+		return NULL;
+	}
+	if (fd <= 1) {
+		exit(-1);
+	}
+	struct file_descriptor *file_desc = find_file_descriptor(fd);
+	if (file_desc == NULL || file_length(file_desc->file_p) == 0) {
+		return NULL;
+	}
+	struct file *file = file_reopen(file_desc->file_p);
+	if (file == NULL) {
+		return NULL;
+	}
+	return do_mmap(addr, length, writable, file, offset);
+}
+
+void munmap (void *addr) {
+	do_munmap(addr);
+}
+
+void lock_acquire_if_available(const struct lock *lock) {
+	if (!lock_held_by_current_thread(lock)) {
+		lock_acquire(lock);
+	}
+}
+
+void lock_release_if_available(const struct lock *lock) {
+	if (lock_held_by_current_thread(lock)) {
+		lock_release(lock);
+	}
 }
