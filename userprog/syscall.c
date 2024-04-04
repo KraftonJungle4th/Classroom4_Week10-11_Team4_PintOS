@@ -232,7 +232,9 @@ int write(int fd, void *buffer, unsigned length) {
 bool create (const char *file, unsigned initial_size) {
 	if (*file == '\0')
 		exit(-1);
+	lock_acquire_if_available(&file_lock);
 	bool result = filesys_create(file, initial_size);
+	lock_release_if_available(&file_lock);
 	return result;
 }
 
@@ -273,9 +275,11 @@ int exec (const char *cmd_line) {
 		exit(-1);
 	}
 	strlcpy(fn_copy, cmd_line, size);
+	lock_acquire_if_available(&file_lock);
 	if (process_exec(fn_copy) == -1) {
 		exit(-1);
 	}
+	lock_release_if_available(&file_lock);
 	return -1;
 }
 

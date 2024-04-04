@@ -6,6 +6,7 @@
 #include "threads/mmu.h"
 #include "threads/vaddr.h"
 #include <string.h>
+#include "userprog/syscall.h"
 
 #define STACK_MAX USER_STACK - (PGSIZE * 256) // 1 MB
 #define VM_STACK VM_ANON | VM_MARKER_0
