@@ -123,7 +123,8 @@ spt_remove_page (struct supplemental_page_table *spt, struct page *page) {
 static struct frame *
 vm_get_victim (void) {
 	// FIFO
-	struct frame *victim = list_entry(list_pop_front(&frame_table), struct frame, frame_elem);
+	struct list_elem *e = list_pop_front(&frame_table);
+	struct frame *victim = list_entry(e, struct frame, frame_elem);
 	return victim;
 }
 
@@ -156,8 +157,7 @@ vm_get_frame (void) {
 		frame = vm_get_victim();
 		frame->page = NULL;
 	}
-	else
-		list_push_back(&frame_table, &frame->frame_elem);
+	list_push_back(&frame_table, &frame->frame_elem);
 	ASSERT (frame != NULL);
 	ASSERT (frame->page == NULL);
 	return frame;
